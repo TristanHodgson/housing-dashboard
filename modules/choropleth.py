@@ -21,40 +21,37 @@ def get_data(month):
     return merged_gdf
 
 
-colormap = cm.LinearColormap(
-    cm.linear.RdYlBu_11.colors[::-1],
-    vmin=0,
-    vmax=data.get_max_price(),
-    caption="Average House Price (£)",
-)
+def make_colormap(linear):
+    if linear:
+        return cm.LinearColormap(
+            cm.linear.RdYlBu_11.colors[::-1],
+            vmin=0,
+            vmax=data.get_max_price(),
+            caption="Average House Price (£)",
+        )
+    else:
+        return cm.LinearColormap(
+            colors=["#000FFF", "#FFC573", "#FF824C", "#FF4126", "#FF0000"],
+            vmin=0,
+            vmax=data.get_max_price(),
+            caption="Average House Price (£)",
+        )
 
-"""
-index = [0, 0.25, 1.00]
-index = [p * data.get_max_price() for p in index]
-colormap = cm.LinearColormap(
-    colors=["#0000FF", "#7D0082", "#FF0000"],
-    index=index,
-    vmin=0,
-    vmax=data.get_max_price(),
-    caption="Average House Price (£)",
-)
-"""
+def style_fn(colormap):
+    def style(feature):
+        price = feature["properties"]["AveragePrice"]
+        if price is None:
+            return {"fillOpacity": 0.5, "weight": 0.5, "color": "black", "fillColor": "#CCCCCC"}
+        return {"fillOpacity": 0.7, "weight": 0.2, "color": "white", "fillColor": colormap(price)}
+    return style
 
-
-def style_fn(feature):
-    price = feature["properties"]["AveragePrice"]
-    if price is None:
-        return {"fillOpacity": 0.5, "weight": 0.5, "color": "black", "fillColor": "#CCCCCC"}
-    return {"fillOpacity": 0.7, "weight": 0.2, "color": "white", "fillColor": colormap(price)}
-
-
-def create_map(gdf):
+def create_map(gdf, colormap):
     m = folium.Map(location=[54.5, -3.2],
                    zoom_start=6, tiles="cartodbpositron")
     if not gdf.empty:
         folium.GeoJson(
             gdf.to_json(),
-            style_function=style_fn,
+            style_function=style_fn(colormap),
             tooltip=folium.GeoJsonTooltip(
                 fields=["RegionName", "RoundedPrice"],
                 aliases=["Area", "Avg Price (£)"]

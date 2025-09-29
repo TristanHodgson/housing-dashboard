@@ -44,10 +44,12 @@ with map_tab:
             value=months[-1],
             format_func=lambda d: d.strftime("%b %Y"),
         )
+        linear_colormap = st.checkbox("Use a linear colormap", value=False)
 
     with col2:
         gdf = ch.get_data(month)
-        st_folium(ch.create_map(gdf), use_container_width=True, height=800)
+        colormap = ch.make_colormap(linear_colormap)
+        st_folium(ch.create_map(gdf, colormap), use_container_width=True, height=800)
 
 with line_tab:
     st.header("Prices over time")
