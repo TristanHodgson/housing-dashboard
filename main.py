@@ -3,6 +3,10 @@ import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
 
+import numpy as np
+import plotly.graph_objects as go
+
+
 from modules import data, line, rebase
 from modules import choropleth as ch
 
@@ -30,7 +34,7 @@ with st.sidebar:
     )
 
 
-map_tab, line_tab, rebase_tab = st.tabs(["Map", "Line Graph", "Rebased"])
+map_tab, line_tab, rebase_tab, corr_tab = st.tabs(["Map", "Line Graph", "Rebased", "Correlation"])
 
 with map_tab:
     st.header("Choropleth Map")
@@ -69,6 +73,22 @@ with line_tab:
                 st.metric(r, f"£{v:,.0f}")
                 st.caption(f"{p:.0%} of UK average")
 
+    st.subheader("Volatility")
+    returns = np.log(region_data[selected_regions]).diff()
+    vol = returns.rolling(12).std()
+    vol_fig = go.Figure()
+    for r in vol.columns:
+        vol_fig.add_trace(go.Scatter(x=vol.index, y=vol[r], name=r, mode="lines", hovertemplate="<b>%{fullData.name}</b>: %{y:,.4f}<extra></extra>",))
+    vol_fig.update_layout(
+        hovermode="x unified",
+        dragmode="zoom",
+        legend_title_text="Region",
+        margin=dict(l=30, r=10, t=10, b=30),
+        yaxis=dict(title="Rolling std of log returns"),
+        xaxis=dict(title="Date", hoverformat="<b style='font-size: 0.8rem'>%Y<b>"),
+    )
+    st.plotly_chart(vol_fig, use_container_width=True)
+
 with rebase_tab:
     st.header("Rebased prices")
     region_data = data.get_region_data(regions=tuple(selected_regions))
@@ -102,3 +122,18 @@ with rebase_tab:
             )
             st.plotly_chart(fig, use_container_width=True,
                             theme="streamlit", config={"scrollZoom": False})
+
+with corr_tab:
+    region_data = data.get_region_data(regions=tuple(selected_regions), include_uk=False)
+
+    returns = np.log(region_data[selected_regions]).diff()  # r_t = log P_t - log P_{t-1}
+    corr = returns.corr()
+    fig = go.Figure(go.Heatmap(
+        z=corr.values,
+        x=corr.columns,
+        y=corr.index,
+        zmin=-1, zmax=1,
+        hovertemplate="Corr: %{z:,.3f}<extra></extra>", 
+    ))
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+    st.plotly_chart(fig, use_container_width=True)
