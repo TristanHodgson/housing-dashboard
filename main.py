@@ -7,12 +7,16 @@ import numpy as np
 import plotly.graph_objects as go
 
 
-from modules import data, line, rebase
+from modules import data, line, rebase, pca
 from modules import choropleth as ch
+import branca.colormap as cm
 
 
 from math import ceil
 from pathlib import Path
+
+
+
 
 DB = "sqlite:///data/data.sqlite"
 TABLE = "hpi_sales"
@@ -34,7 +38,7 @@ with st.sidebar:
     )
 
 
-map_tab, line_tab, rebase_tab, corr_tab = st.tabs(["Map", "Line Graph", "Rebased", "Correlation"])
+map_tab, line_tab, rebase_tab, corr_tab, pca_tab = st.tabs(["Map", "Line Graph", "Rebased", "Correlation", "PCA"])
 
 with map_tab:
     st.header("Choropleth Map")
@@ -51,8 +55,24 @@ with map_tab:
         linear_colormap = st.checkbox("Use a linear colormap", value=False)
 
     with col2:
-        gdf = ch.get_data(month)
-        colormap = ch.make_colormap(linear_colormap)
+        map_df = data.monthly_for_map(month)
+        map_df = map_df.rename(columns={"AveragePrice": "Value"})
+        map_df["Value"] = pd.to_numeric(map_df["Value"], errors="coerce")
+        gdf = ch.prepare_gdf(
+            value_df=map_df,
+            value_col="Value",
+            label_col="RegionName",
+            value_fmt=lambda x: f"£{x:,.0f}")
+        vmax = data.get_max_price()
+        colormap = ch.make_colormap(
+            vmin=0,
+            vmax=vmax,
+            colors=(
+                cm.linear.RdYlBu_11.colors[::-1]
+                if linear_colormap
+                else ["#000FFF", "#FFC573", "#FF824C", "#FF4126", "#FF0000"]
+            ),
+            caption="Average House Price (£)")
         st_folium(ch.create_map(gdf, colormap), use_container_width=True, height=800)
 
 with line_tab:
@@ -125,7 +145,6 @@ with rebase_tab:
 
 with corr_tab:
     region_data = data.get_region_data(regions=tuple(selected_regions), include_uk=False)
-
     returns = np.log(region_data[selected_regions]).diff()  # r_t = log P_t - log P_{t-1}
     corr = returns.corr()
     fig = go.Figure(go.Heatmap(
@@ -137,3 +156,28 @@ with corr_tab:
     ))
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
     st.plotly_chart(fig, use_container_width=True)
+
+with pca_tab:
+    st.header("PCA Choropleth Map")
+    all_returns = data.get_region_data(regions=tuple(regions), include_uk=False)
+    pca_vector, pca_eigenvalues = pca.pca(all_returns)
+    pca_vector = pca_vector.rename(columns={"PC1": "Value"})
+    pca_vector = pca_vector.reset_index()
+    pca_vector = pca_vector.rename(columns={"index": "RegionName"})
+    pca_vector["Value"] = pd.to_numeric(pca_vector["Value"], errors="coerce")
+    gdf = ch.prepare_gdf(
+        value_df=pca_vector,
+        value_col="Value",
+        label_col="RegionName",
+        join_col="RegionName",
+        value_fmt=lambda x: f"{x*100:,.2f}%",
+    )
+    mx_pc = pca_vector["Value"].abs().max()
+    colormap = ch.make_colormap(
+        vmin=-mx_pc,
+        vmax=mx_pc,
+        colors=(
+            cm.linear.RdYlBu_11.colors[::-1]
+        ),
+        caption="Average House Price (£)")
+    st_folium(ch.create_map(gdf, colormap), use_container_width=True, height=800)
