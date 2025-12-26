@@ -26,6 +26,7 @@ regions = data.get_region_list()
 time_df = df.transpose()
 returns = np.log(df).diff().dropna()
 time_returns_df = returns.transpose()
+areacode_to_region = {code: name for name, code in mapping.items()}
 
 #####################
 ##### Streamlit #####
@@ -71,7 +72,7 @@ with vis_tab:
     ch_df = pd.DataFrame({
         "areacode": ch_df.index,
         "value": ch_df.values,
-        "label_area": [mapping.get(code, code) for code in ch_df.index],
+        "label_area": ch_df.index.map(areacode_to_region),
         "label_value": ch_df.apply(lambda x: f"£{x:,.0f}" if pd.notnull(x) else "No Data")})
 
     fig = geo_data.create_choropleth(
@@ -133,8 +134,8 @@ with vis_tab:
 
     filtered_returns_df = time_returns_df.loc[selected_areacodes]
     corr = filtered_returns_df.T.corr()
-    areacode_to_region = {mapping[region]: region for region in selected_regions}
-    corr = corr.rename( index=areacode_to_region, columns=areacode_to_region)
+    filtered_areacode_to_region = {mapping[region]: region for region in selected_regions}
+    corr = corr.rename( index=filtered_areacode_to_region, columns=filtered_areacode_to_region)
     fig = go.Figure(go.Heatmap(
         z=corr.values,
         x=corr.columns,
@@ -164,8 +165,8 @@ with analysis_tab:
     eigenvectors, scree = pca.pca(returns, n=num_components)
     eigenvector = eigenvectors[pc]
 
-    eigenvector["label_area"] = eigenvector["areacode"].map({name: code for name, code in mapping.items()})
-    eigenvector["label_value"] = eigenvector["value"].round(3)
+    eigenvector["label_area"] = eigenvector["areacode"].map(areacode_to_region)
+    eigenvector["label_value"] = eigenvector["value"]
 
     mx = eigenvector["value"].abs().max()
     fig =  geo_data.create_choropleth(eigenvector, caption=f"{pc} loadings", vmin=-mx, vmax=mx)
