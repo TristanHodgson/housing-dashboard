@@ -23,6 +23,8 @@ You may need to adjust the above file to use the correct file name in the csv_fi
 python -m streamlit run main.py
 ```
 
-## Overview
+## Screenshots
 
-![](img/dash.png)
+![](img/vis.png)
+![](img/pca.png)
+![](img/clustering.png)
