@@ -1,183 +1,143 @@
-import pandas as pd
-
 import streamlit as st
+import pandas as pd
+import branca.colormap as cm
+import streamlit as st
+import pandas as pd
+import geopandas as gpd
+from arcgis.gis import GIS
+import branca.colormap as cm
+import folium
 from streamlit_folium import st_folium
-
 import numpy as np
 import plotly.graph_objects as go
 
 
-from modules import data, line, rebase, pca
-from modules import choropleth as ch
-import branca.colormap as cm
+from modules import data, geo_data, line
 
 
-from math import ceil
-from pathlib import Path
+####################
+##### Get Data #####
+####################
 
+df = data.get_data().dropna()
+mapping = data.get_area_mapping()
+months = df.index.unique().sort_values()
+regions = data.get_region_list()
+time_df = df.transpose()
+returns = np.log(df).diff().dropna()
+time_returns_df = returns.transpose()
 
-
-
-DB = "sqlite:///data/data.sqlite"
-TABLE = "hpi_sales"
-GEOM_PATH = Path("data/uk_boundaries.parquet")
-MIN_YEAR = 1995
-MIN_DATE = pd.Timestamp(f"{MIN_YEAR}-01-01")
+#####################
+##### Streamlit #####
+#####################
 
 st.set_page_config(page_title="UK House Price Dashboard", layout="wide")
 st.title("UK House Price Dashboard")
 
+######################
+##### Choropleth #####
+######################
+
 with st.sidebar:
-    regions = data.get_region_list()
-    countries = [x for x in ["England", "Wales",
-                             "Scotland", "Northern Ireland"] if x in regions]
     selected_regions = st.multiselect(
         "Select regions to compare",
         options=regions,
-        default=countries,
-    )
+        default=["England", "North West", "Scotland", "Northern Ireland"])
+    selected_areacodes = [mapping[region] for region in selected_regions]
 
 
-map_tab, line_tab, rebase_tab, corr_tab, pca_tab = st.tabs(["Map", "Line Graph", "Rebased", "Correlation", "PCA"])
+st.header(f"Prices Map")
 
-with map_tab:
-    st.header("Choropleth Map")
+
+col1, col2 = st.columns([1, 4])
+
+with col1:
+    selected_month = st.select_slider(
+        "Select Month",
+        options=months,
+        value=months[-1],
+        format_func=lambda d: d.strftime("%b %Y"))
+    linear_color = st.checkbox("Use a linear colormap", value=False)
+
+
+colors = (cm.linear.RdYlBu_11.colors[::-1] if linear_color else [
+          "#0000FF", "#FFC573", "#FF824C", "#FF4126", "#FF0000"])
+
+ch_df = df.loc[selected_month]
+ch_df = pd.DataFrame({
+    "areacode": ch_df.index,
+    "value": ch_df.values,
+    "label_area": [mapping.get(code, code) for code in ch_df.index],
+    "label_value": ch_df.apply(lambda x: f"£{x:,.0f}" if pd.notnull(x) else "No Data")})
+
+fig = geo_data.create_choropleth(
+    ch_df, caption="Average House Price (£)", colors=colors, vmin=0)
+
+with col2:
+    st_folium(fig, width="stretch", height=600)
+
+
+#######################
+##### Line Graphs #####
+#######################
+
+st.header(f"Line Graph")
+
+raw_tab, rebased_tab, returns = st.tabs(
+    ["Raw Price", "Rebased", "Log Returns"])
+
+filtered_time_df = time_df.loc[selected_areacodes]
+
+with raw_tab:
+    fig = line.create_line(filtered_time_df, selected_regions)
+    st.plotly_chart(fig, width="stretch")
+
+with rebased_tab:
     col1, col2 = st.columns([1, 4])
     with col1:
-        min_month, max_month = data.get_date_bounds()
-        months = data.get_available_months()
-        month = st.select_slider(
-            "Select Month",
-            options=months,
-            value=months[-1],
+        base_month = st.select_slider(
+            "Select Base Month",
+            options=months[:-1],
+            value=months[0],
             format_func=lambda d: d.strftime("%b %Y"),
-        )
-        linear_colormap = st.checkbox("Use a linear colormap", value=False)
-
+            key="rebase_month")
     with col2:
-        map_df = data.monthly_for_map(month)
-        map_df = map_df.rename(columns={"AveragePrice": "Value"})
-        map_df["Value"] = pd.to_numeric(map_df["Value"], errors="coerce")
-        gdf = ch.prepare_gdf(
-            value_df=map_df,
-            value_col="Value",
-            label_col="RegionName",
-            value_fmt=lambda x: f"£{x:,.0f}")
-        vmax = data.get_max_price()
-        colormap = ch.make_colormap(
-            vmin=0,
-            vmax=vmax,
-            colors=(
-                cm.linear.RdYlBu_11.colors[::-1]
-                if linear_colormap
-                else ["#000FFF", "#FFC573", "#FF824C", "#FF4126", "#FF0000"]
-            ),
-            caption="Average House Price (£)")
-        st_folium(ch.create_map(gdf, colormap), use_container_width=True, height=800)
+        rebased_df = filtered_time_df.loc[:,
+                                          filtered_time_df.columns >= base_month]
+        base_values = rebased_df[base_month]
+        rebased_df = rebased_df.div(base_values, axis=0) * 100
 
-with line_tab:
-    st.header("Prices over time")
-    region_data = data.get_region_data(
-        regions=tuple(selected_regions), include_uk=True)
-    if region_data.empty:
-        st.info("No data available for the selected regions")
-    else:
-        fig = line.create_line_graph(region_data, selected_regions)
-        st.plotly_chart(fig, use_container_width=True,
-                        theme="streamlit", config={"scrollZoom": False})
+        fig = line.create_line(rebased_df, selected_regions)
+        fig.update_yaxes(title="Indexed Prices")
+        st.plotly_chart(fig, width="stretch")
 
-        st.subheader("Latest average prices")
-        columns = st.columns(max(1, len(selected_regions)))
-        for i, (r, v, p) in enumerate(line.perf_metrics(region_data, selected_regions)):
-            with columns[i]:
-                st.metric(r, f"£{v:,.0f}")
-                st.caption(f"{p:.0%} of UK average")
+with returns:
+    filtered_time_returns_df = time_returns_df.loc[selected_areacodes] * 100
+    fig = line.create_line(filtered_time_returns_df, selected_regions)
+    fig.update_yaxes(title="Monthly log return (%)", tickformat=".1f")
+    fig.update_traces(
+        hovertemplate="<b>%{fullData.name}</b>: %{y:.2f}%<extra></extra>")
+    st.plotly_chart(fig, width="stretch")
 
-    st.subheader("Volatility")
-    returns = np.log(region_data[selected_regions]).diff()
-    vol = returns.rolling(12).std()
-    vol_fig = go.Figure()
-    for r in vol.columns:
-        vol_fig.add_trace(go.Scatter(x=vol.index, y=vol[r], name=r, mode="lines", hovertemplate="<b>%{fullData.name}</b>: %{y:,.4f}<extra></extra>",))
-    vol_fig.update_layout(
-        hovermode="x unified",
-        dragmode="zoom",
-        legend_title_text="Region",
-        margin=dict(l=30, r=10, t=10, b=30),
-        yaxis=dict(title="Rolling std of log returns"),
-        xaxis=dict(title="Date", hoverformat="<b style='font-size: 0.8rem'>%Y<b>"),
-    )
-    st.plotly_chart(vol_fig, use_container_width=True)
 
-with rebase_tab:
-    st.header("Rebased prices")
-    region_data = data.get_region_data(regions=tuple(selected_regions))
+#######################
+##### Correlation #####
+#######################
 
-    if region_data.empty:
-        st.info("No data available for the selected regions.")
-    else:
-        present, full_months, default_base = rebase.get_options(
-            region_data, selected_regions)
-        if not present:
-            st.info("None of the selected regions are available in the dataset.")
-        elif not full_months:
-            st.warning("No month has data for all selected regions")
-        else:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                base_month = st.select_slider(
-                    "Rebase month (base = 100)",
-                    options=full_months,
-                    value=default_base,
-                    format_func=lambda d: d.strftime("%b %Y"),
-                )
-            with col2:
-                show_before = st.checkbox("Show data before index month")
+st.header(f"Correlation Matrix")
 
-            fig = rebase.create_rebased_graph(
-                region_data,
-                present,
-                base_month,
-                include_before=show_before,
-            )
-            st.plotly_chart(fig, use_container_width=True,
-                            theme="streamlit", config={"scrollZoom": False})
 
-with corr_tab:
-    region_data = data.get_region_data(regions=tuple(selected_regions), include_uk=False)
-    returns = np.log(region_data[selected_regions]).diff()  # r_t = log P_t - log P_{t-1}
-    corr = returns.corr()
-    fig = go.Figure(go.Heatmap(
-        z=corr.values,
-        x=corr.columns,
-        y=corr.index,
-        zmin=-1, zmax=1,
-        hovertemplate="Corr: %{z:,.3f}<extra></extra>", 
-    ))
-    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
-    st.plotly_chart(fig, use_container_width=True)
-
-with pca_tab:
-    st.header("PCA Choropleth Map")
-    all_returns = data.get_region_data(regions=tuple(regions), include_uk=False)
-    pca_vector, pca_eigenvalues = pca.pca(all_returns)
-    pca_vector = pca_vector.rename(columns={"PC1": "Value"})
-    pca_vector = pca_vector.reset_index()
-    pca_vector = pca_vector.rename(columns={"index": "RegionName"})
-    pca_vector["Value"] = pd.to_numeric(pca_vector["Value"], errors="coerce")
-    gdf = ch.prepare_gdf(
-        value_df=pca_vector,
-        value_col="Value",
-        label_col="RegionName",
-        join_col="RegionName",
-        value_fmt=lambda x: f"{x*100:,.2f}%",
-    )
-    mx_pc = pca_vector["Value"].abs().max()
-    colormap = ch.make_colormap(
-        vmin=-mx_pc,
-        vmax=mx_pc,
-        colors=(
-            cm.linear.RdYlBu_11.colors[::-1]
-        ),
-        caption="Average House Price (£)")
-    st_folium(ch.create_map(gdf, colormap), use_container_width=True, height=800)
+filtered_returns_df = time_returns_df.loc[selected_areacodes]
+corr = filtered_returns_df.T.corr()
+areacode_to_region = {mapping[region]: region for region in selected_regions}
+corr = corr.rename( index=areacode_to_region, columns=areacode_to_region)
+fig = go.Figure(go.Heatmap(
+    z=corr.values,
+    x=corr.columns,
+    y=corr.index,
+    zmin=-1, zmax=1,
+    colorscale="RdBu",
+    hovertemplate="Corr: %{z:,.3f}<extra></extra>", 
+))
+fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+st.plotly_chart(fig, width="stretch")
