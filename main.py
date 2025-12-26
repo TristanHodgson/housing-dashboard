@@ -10,9 +10,10 @@ import folium
 from streamlit_folium import st_folium
 import numpy as np
 import plotly.graph_objects as go
+import plotly.colors
 
 
-from modules import data, geo_data, line, pca
+from modules import data, geo_data, line, pca, kmeans
 
 
 ####################
@@ -35,7 +36,7 @@ areacode_to_region = {code: name for name, code in mapping.items()}
 st.set_page_config(page_title="UK House Price Dashboard", layout="wide")
 st.title("UK House Price Dashboard")
 
-vis_tab, analysis_tab = st.tabs(["Visualisation", "Analysis"])
+vis_tab, pca_tab, cluster_tab = st.tabs(["Visualisation", "PCA", "Clustering"])
 
 with vis_tab:
 
@@ -152,7 +153,7 @@ with vis_tab:
 #####     PCA     #####
 #######################
 
-with analysis_tab:
+with pca_tab:
     st.header(f"Principle Component Analysis")
     num_components = 7
     col1, col2 = st.columns([1, 4])
@@ -176,6 +177,29 @@ with analysis_tab:
         st_folium(fig, width="stretch", height=600)
 
     st.subheader(f"Scree Plot")
-
-
     st.bar_chart(scree, x_label="Component", y_label="Variance")
+
+
+###################
+##### K means #####
+###################
+
+with cluster_tab:
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        n_clusters = st.slider("Number of Clusters", min_value=2, max_value=10, value=5)
+    cluster_df = kmeans.kmeans(time_returns_df, n_clusters=n_clusters)
+    cluster_df["label_area"] = cluster_df["areacode"].map(areacode_to_region)
+
+    cluster_colors = plotly.colors.qualitative.Plotly[:n_clusters]
+    
+    fig_kmeans = geo_data.create_choropleth(
+        cluster_df, 
+        caption="Regional Cluster", 
+        colors=cluster_colors, 
+        vmin=0, 
+        vmax=n_clusters - 1
+    )
+
+    with col2:
+        st_folium(fig_kmeans, width="stretch", height=800)
